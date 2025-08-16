@@ -1,6 +1,7 @@
 import { Router } from "express";
 import * as userService from "./user.service.js";
 import { fileUpload } from "../../utils/multer/index.js";
+import { fileUploadCloud } from "../../utils/multer/multer.cloud.js";
 import { fileValidationMiddleware } from "../../middleware/file-validation.middleware.js";
 import { isAuthenticated } from "../../middleware/auth.middleware.js";
 const router = Router();
@@ -13,7 +14,16 @@ router.post(
   fileValidationMiddleware(),
   userService.uploadProfilePicture
 );
+router.post(
+  "/upload-profile-picture-cloud",
+  isAuthenticated,
+  fileUploadCloud().single("profilePicture"),
+  fileValidationMiddleware(),
+  userService.uploadProfilePictureCloud
+);
 router.post("/request-password-reset", userService.requestPasswordReset);
 router.post("/reset-password", userService.resetPassword);
+
+router.post("/log-out", isAuthenticated, userService.logOut);
 
 export default router;

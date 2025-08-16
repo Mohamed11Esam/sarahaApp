@@ -5,6 +5,8 @@ import bcrypt from "bcrypt";
 import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
+import { generateToken } from "../../utils/token/index.js";
+import { TokenBlacklist } from "../../DB/models/token.model.js";
 dotenv.config();
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -44,10 +46,13 @@ export const register = async (req, res) => {
     phone,
     dob,
   });
+  // Verification code logic
   const otp = Math.floor(100000 + Math.random() * 900000);
-  const otpExpiration = Date.now() + 5 * 60 * 1000; // 5 minutes from now
+  const otpExpiration = Date.now() + 2 * 60 * 1000; // 2 minutes from now
   user.otp = otp;
   user.otpExpiration = otpExpiration;
+  user.otpFailedAttempts = 0;
+  user.otpBanUntil = undefined;
   if (email) {
     await sendMail({
       to: email,
@@ -91,32 +96,70 @@ export const login = async (req, res) => {
       .status(401)
       .json({ error: "Invalid credentials", success: false });
   }
-  const token = jwt.sign({ userId: userExists._id }, JWT_SECRET, {
-    expiresIn: "1h",
+  const accessToken = generateToken(userExists._id, "1h");
+  const refreshToken = generateToken(userExists._id, "7d");
+  await TokenBlacklist.create({
+    token: refreshToken,
+    user: userExists._id,
+    type: "refresh",
   });
   return res.status(200).json({
     message: "Login successful",
     success: true,
-    data: { userExists, token },
+    data: { userExists, accessToken, refreshToken },
   });
 };
 
 // Verify OTP
 export const verifyOtp = async (req, res) => {
   const { email, otp } = req.body;
-  const user = await User.findOne({
-    email,
-    otp,
-    otpExpiration: { $gt: Date.now() },
-  });
+  const user = await User.findOne({ email });
   if (!user) {
+    return res.status(404).json({ error: "User not found", success: false });
+  }
+  // Check for ban
+  if (user.otpBanUntil && user.otpBanUntil > Date.now()) {
+    return res
+      .status(429)
+      .json({
+        error: `Too many failed attempts. Try again after ${Math.ceil(
+          (user.otpBanUntil - Date.now()) / 1000
+        )} seconds.`,
+        success: false,
+      });
+  }
+  // Check OTP expiration
+  if (!user.otp || user.otpExpiration < Date.now()) {
+    return res.status(401).json({ error: "OTP expired", success: false });
+  }
+  // Check OTP value
+  if (user.otp !== Number(otp)) {
+    user.otpFailedAttempts = (user.otpFailedAttempts || 0) + 1;
+    // Ban after 5 failed attempts
+    if (user.otpFailedAttempts >= 5) {
+      user.otpBanUntil = Date.now() + 5 * 60 * 1000; // 5 minutes ban
+      await user.save();
+      return res
+        .status(429)
+        .json({
+          error: "Too many failed attempts. You are banned for 5 minutes.",
+          success: false,
+        });
+    }
+    await user.save();
     return res
       .status(401)
-      .json({ error: "Invalid or expired OTP", success: false });
+      .json({
+        error: `Invalid OTP. Attempts left: ${5 - user.otpFailedAttempts}`,
+        success: false,
+      });
   }
+  // Success: reset attempts and ban
   user.isVerified = true;
   user.otp = undefined;
   user.otpExpiration = undefined;
+  user.otpFailedAttempts = 0;
+  user.otpBanUntil = undefined;
   await user.save();
   return res
     .status(200)
@@ -130,9 +173,28 @@ export const reSendOtp = async (req, res) => {
   if (!user) {
     return res.status(404).json({ error: "User not found", success: false });
   }
-  const { otp, otpExpiration } = generateOtp();
+  // If banned, do not allow resend
+  if (user.otpBanUntil && user.otpBanUntil > Date.now()) {
+    return res
+      .status(429)
+      .json({
+        error: `You are temporarily banned from requesting a new code. Try again after ${Math.ceil(
+          (user.otpBanUntil - Date.now()) / 1000
+        )} seconds.`,
+        success: false,
+      });
+  }
+  // Reset failed attempts if ban expired
+  if (user.otpBanUntil && user.otpBanUntil <= Date.now()) {
+    user.otpFailedAttempts = 0;
+    user.otpBanUntil = undefined;
+  }
+  // Generate new OTP
+  const otp = Math.floor(100000 + Math.random() * 900000);
+  const otpExpiration = Date.now() + 2 * 60 * 1000; // 2 minutes
   user.otp = otp;
   user.otpExpiration = otpExpiration;
+  user.otpFailedAttempts = 0;
   await sendMail({
     to: email,
     subject: "Resend Verification Email",
