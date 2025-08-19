@@ -52,6 +52,7 @@ const userSchema = new Schema(
     otpExpiration: { type: Date },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
+    credentialsUpdatedAt: { type: Date, default: Date.now },
   },
   { timestamps: true, toObject: { virtuals: true }, toJSON: { virtuals: true } }
 );

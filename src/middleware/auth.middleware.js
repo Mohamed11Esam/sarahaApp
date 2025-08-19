@@ -19,6 +19,9 @@ export const isAuthenticated = async (req, res, next) => {
 
         throw new Error("user not found" , {cause : 404})
     }
+    if (userExist.credentialsUpdatedAt > new Date(payload.iat * 1000)) {
+        throw new Error("Credentials have been updated. Please log in again.", { cause: 401 }); 
+    }
     req.user = userExist
     return next();
 }

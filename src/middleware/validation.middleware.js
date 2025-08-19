@@ -1,7 +1,7 @@
 export const isValid = (schema) => {
    
     return (req,res,next)=>{
-        const { error } = schema.validate(req.body, { abortEarly: false });
+        const { error } = schema.validate({...req.body,...req.params,...req.query}, { abortEarly: false });
         if (error) {
           let errMsg = error.details.map((err) => {
               return err.message;

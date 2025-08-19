@@ -234,3 +234,85 @@ export const googleLogin = async (req, res) => {
     data: { user, token },
   });
 };
+
+export const requestPasswordReset = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ error: "User not found", success: false });
+    }
+    // Reuse your OTP logic
+    const otp = Math.floor(100000 + Math.random() * 900000);
+    const otpExpiration = Date.now() + 5 * 60 * 1000; // 5 minutes
+    user.otp = otp;
+    user.otpExpiration = otpExpiration;
+    
+    await user.save();
+
+    // Reuse your sendMail function
+    await sendMail({
+      to: email,
+      subject: "Password Reset OTP",
+      html: `<p>Your password reset OTP is: <strong>${otp}</strong></p>`,
+    });
+
+    // Issue a short-lived reset token
+    const resetToken = jwt.sign({ userId: user._id }, JWT_SECRET, {
+      expiresIn: "10m",
+    });
+
+    return res.status(200).json({
+      message: "OTP sent to email",
+      success: true,
+      resetToken,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message, success: false });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const { resetToken, otp, newPassword } = req.body;
+    if (!resetToken) {
+      return res
+        .status(400)
+        .json({ error: "No reset token provided", success: false });
+    }
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, JWT_SECRET);
+    } catch (err) {
+      return res
+        .status(401)
+        .json({ error: "Invalid or expired reset token", success: false });
+    }
+    const user = await User.findById(decoded.userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found", success: false });
+    }
+    if (
+      !user.otp ||
+      user.otp !== Number(otp) ||
+      !user.otpExpiration ||
+      user.otpExpiration < Date.now()
+    ) {
+      return res
+        .status(400)
+        .json({ error: "Invalid or expired OTP", success: false });
+    }
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.otp = undefined;
+    user.otpExpiration = undefined;
+    user.credentialsUpdatedAt = Date.now();
+    
+    await user.save();
+    await TokenBlacklist.deleteMany({user: user._id , type: 'refresh'});
+    return res
+      .status(200)
+      .json({ message: "Password reset successfully", success: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message, success: false });
+  }
+};
