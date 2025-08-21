@@ -1,6 +1,12 @@
 import { Router } from "express";
 import * as userService from "./user.service.js";
 import { isValid } from "../../middleware/validation.middleware.js";
+import {
+  deleteUserSchema,
+  uploadProfilePictureSchema,
+  uploadProfilePictureCloudSchema,
+  logOutSchema,
+} from "./user.validation.js";
 import { fileUpload } from "../../utils/multer/index.js";
 import { fileUploadCloud } from "../../utils/multer/multer.cloud.js";
 import { fileValidationMiddleware } from "../../middleware/file-validation.middleware.js";
@@ -10,11 +16,13 @@ const router = Router();
 router.delete(
   "/delete-user",
   isAuthenticated,
+  isValid(deleteUserSchema),
   userService.deleteUser
 );
 router.post(
   "/upload-profile-picture",
   isAuthenticated,
+  isValid(uploadProfilePictureSchema),
   fileUpload().single("profilePicture"),
   fileValidationMiddleware(),
   userService.uploadProfilePicture
@@ -22,6 +30,7 @@ router.post(
 router.post(
   "/upload-profile-picture-cloud",
   isAuthenticated,
+  isValid(uploadProfilePictureCloudSchema),
   fileUploadCloud().single("profilePicture"),
   fileValidationMiddleware(),
   userService.uploadProfilePictureCloud
@@ -34,6 +43,7 @@ router.post(
 router.post(
   "/log-out",
   isAuthenticated,
+  isValid(logOutSchema),
   userService.logOut
 );
 
